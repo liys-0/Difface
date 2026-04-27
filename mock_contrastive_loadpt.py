@@ -5,9 +5,44 @@ from torch.utils.data import TensorDataset, DataLoader
 import os
 import sys
 
+import csv
+import numpy as np
+from typing import Dict, List
+
 sys.path.append(os.path.join(os.path.dirname(__file__), "Difface"))
 from faceclip.encoder import Transformer
-from faceclip.dataset_260408 import load_category_csv_to_ram
+
+
+def map_categories_to_012(X):
+    X_mapped = np.zeros_like(X, dtype=np.int32)
+    for i in range(1, 49):
+        X_mapped[X == i] = i % 3
+    return X_mapped
+
+
+def load_category_csv_to_ram(csv_path: str, dtype=np.int32):
+    ids: List[str] = []
+    rows: List[np.ndarray] = []
+    log10p = None
+
+    with open(csv_path, "r", newline="") as f:
+        r = csv.reader(f)
+        header = next(r)
+        snp_cols = header[1:]
+        for row in r:
+            if len(row) == 0:
+                continue
+            row_name = row[0].strip()
+            if row_name.upper() == "LOG10P":
+                log10p = np.asarray(row[1:], dtype=np.float32)
+                continue
+            ids.append(row_name)
+            rows.append(np.asarray(row[1:], dtype=dtype))
+
+    X = np.stack(rows, axis=0)
+    X = map_categories_to_012(X)
+    id2row: Dict[str, int] = {pid: i for i, pid in enumerate(ids)}
+    return ids, X, id2row, snp_cols, log10p
 
 
 def mock_eval_latents(pt_path, num_train=1000, latent_dim=128):
@@ -76,13 +111,24 @@ def nt_xent_loss(z1, z2, temperature=0.5):
 
 
 def main():
-    csv_path = "Difface/faceclip/dummy_SNP_with_LOG10P_category_ids.csv"
+    csv_path = "Difface/faceclip/dataset/mock_snp_1000_category_ids_mapped.csv"
     print(f"[1] Loading SNPs from '{csv_path}'...")
     ids, snp_matrix, id2row, snp_cols, log10p = load_category_csv_to_ram(csv_path)
-    
+
+    # Sort subjects by ascending ID
+    ids_sorted = sorted(ids)
+    row_order = [id2row[i] for i in ids_sorted]
+    snp_matrix = snp_matrix[row_order]
+    ids = ids_sorted
+
+    # Filter SNPs by LOG10P threshold (~800/1000 kept)
+    log10p_threshold = 1.49
+    snp_keep_mask = log10p > log10p_threshold
+    snp_matrix = snp_matrix[:, snp_keep_mask]
+
     num_train, num_snps = snp_matrix.shape
     train_snps = torch.tensor(snp_matrix).float()
-    print(f"    Loaded {num_train} subjects, {num_snps} SNPs each.\n")
+    print(f"    Loaded {num_train} subjects, {num_snps} SNPs kept (LOG10P > {log10p_threshold}).\n")
 
     face_latents_path = "mock_face_latents.pt"
     latent_dim = 16
