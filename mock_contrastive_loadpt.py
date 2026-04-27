@@ -7,6 +7,7 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "Difface"))
 from faceclip.encoder import Transformer
+from faceclip.dataset_260408 import load_category_csv_to_ram
 
 
 def mock_eval_latents(pt_path, num_train=1000, latent_dim=128):
@@ -75,20 +76,23 @@ def nt_xent_loss(z1, z2, temperature=0.5):
 
 
 def main():
-    snps_path = "mock_snps.pt"
-    face_latents_path = "mock_face_latents.pt"  #load from the real pt file
+    csv_path = "Difface/faceclip/dummy_SNP_with_LOG10P_category_ids.csv"
+    print(f"[1] Loading SNPs from '{csv_path}'...")
+    ids, snp_matrix, id2row, snp_cols, log10p = load_category_csv_to_ram(csv_path)
+    
+    num_train, num_snps = snp_matrix.shape
+    train_snps = torch.tensor(snp_matrix).float()
+    print(f"    Loaded {num_train} subjects, {num_snps} SNPs each.\n")
 
-    mock_snps(snps_path, num_snps=7842)
-    train_snps = load_data(snps_path)
-
-    #mock_eval_latents(face_latents_path, latent_dim=128)
+    face_latents_path = "mock_face_latents.pt"
+    latent_dim = 16
+    mock_eval_latents(face_latents_path, num_train=num_train, latent_dim=latent_dim)
     train_face_latents = load_data(face_latents_path)
 
     print("[3] Setting up Contrastive Learning with Real Transformer...")
 
-    encoder = Transformer()
+    encoder = Transformer(num_snps=num_snps)
 
-    latent_dim = 16
     model_snps = ProjectionHead(in_dim=128, out_dim=8)
     model_faces = ProjectionHead(in_dim=latent_dim, out_dim=8)
 

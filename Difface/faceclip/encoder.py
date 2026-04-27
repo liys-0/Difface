@@ -94,29 +94,34 @@ class FACE_encoder(nn.Module):
         return z
 
 class Transformer(nn.Module):
-    def __init__(self):
+    def __init__(self, num_snps):
         super(Transformer, self).__init__()
-        self.fc1 = nn.Linear(7842, 1024)
-        self.embedding_layer = nn.Embedding(1,4)
+        self.embedding_layer = nn.Embedding(3, 64) # Embeds 0, 1, 2 into 64-dimensional vectors
+        self.pos_encoder = nn.Parameter(torch.randn(1, num_snps, 64))
         self.relu1 = nn.ReLU()
         self.relu2 = nn.ReLU()
         self.layer1 = nn.TransformerEncoderLayer(d_model=64, nhead=8, dim_feedforward=512, dropout=0.1, layer_norm_eps=1e-05)
         self.layer2 = nn.TransformerEncoderLayer(d_model=64, nhead=8, dim_feedforward=512, dropout=0.1, layer_norm_eps=1e-05)
 
-        self.fc2 = nn.Linear(64*1024, 128)
+        self.fc2 = nn.Linear(64*num_snps, 128)
         
     def forward(self, x):
-        x = x.float()
-        x = self.relu1(self.fc1(x))
-        x = x.unsqueeze(2)  
-        x = x.expand(-1, -1, 64)  
-        x = x.permute(1, 0, 2) 
+        # x is expected to be integers: 0, 1, or 2 representing SNPs
+        x = x.long()
+        x = self.embedding_layer(x)  # Shape: (batch_size, num_snps, 64)
+        x = x + self.pos_encoder     # Add positional embeddings
+        
+        # PyTorch Transformer expects (Sequence_Length, Batch_Size, Embedding_Dim)
+        x = x.permute(1, 0, 2)       # Shape: (num_snps, batch_size, 64)
+        
         x1 = self.layer1(x) 
         x1 = x1 + x
         x2 = self.layer2(x1)
-        x2 = x2 +x1
+        x2 = x2 + x1
+        
+        # Bring it back to (Batch_Size, Sequence_Length, Embedding_Dim)
         x2 = x2.permute(1, 0, 2)
-        x2 = torch.flatten(x2, start_dim = 1)
+        x2 = torch.flatten(x2, start_dim = 1) # Shape: (batch_size, num_snps * 64)
         out = self.relu2(self.fc2(x2))
 
         return out

@@ -101,7 +101,7 @@ image_encoder = FACE_encoder(args.in_channels, args.out_channels, args.latent_ch
                             spiral_indices_list, down_transform_list,
                             up_transform_list).to(device)
 
-text_encoder = Transformer().to(device)
+text_encoder = Transformer(num_snps=train_dataset.num_snps_after_filter).to(device)
 
 model = CLIP(
     image_encoder = image_encoder,
