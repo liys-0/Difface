@@ -1,190 +1,134 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import TensorDataset, DataLoader
-import os
-import sys
-
 import csv
 import numpy as np
-from typing import Dict, List
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+from torch.utils.data import TensorDataset, DataLoader
+import sys
+import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "Difface"))
-from faceclip.encoder import Transformer
+from faceclip.encoder import Transformer, CLIP
 
+print("1. Reading data from CSV...")
+csv_file = 'Difface/faceclip/dataset/mock_snp_1000_category_ids_mapped.csv'
 
-def map_categories_to_012(X):
-    X_mapped = np.zeros_like(X, dtype=np.int32)
-    for i in range(1, 49):
-        X_mapped[X == i] = i % 3
-    return X_mapped
+log10p_values = []
+row_ids = []
+data_matrix = []
 
+with open(csv_file, 'r') as f:
+    reader = csv.reader(f)
+    header = next(reader) # Row 0: ID, chr1:...
 
-def load_category_csv_to_ram(csv_path: str, dtype=np.int32):
-    ids: List[str] = []
-    rows: List[np.ndarray] = []
-    log10p = None
+    log10_row = next(reader) # Row 1: LOG10P, ...
+    assert log10_row[0] == 'LOG10P'
+    log10p_values = np.array([float(x) for x in log10_row[1:]])
 
-    with open(csv_path, "r", newline="") as f:
-        r = csv.reader(f)
-        header = next(r)
-        snp_cols = header[1:]
-        for row in r:
-            if len(row) == 0:
-                continue
-            row_name = row[0].strip()
-            if row_name.upper() == "LOG10P":
-                log10p = np.asarray(row[1:], dtype=np.float32)
-                continue
-            ids.append(row_name)
-            rows.append(np.asarray(row[1:], dtype=np.float32).astype(dtype))
+    # Rows 2+: SSV..., values...
+    for i, row in enumerate(reader):
+        row_ids.append((i, row[0])) # Store original index and ID
+        data_matrix.append([float(x) for x in row[1:]])
 
-    X = np.stack(rows, axis=0)
-    X = map_categories_to_012(X)
-    id2row: Dict[str, int] = {pid: i for i, pid in enumerate(ids)}
-    return ids, X, id2row, snp_cols, log10p
+data_matrix = np.array(data_matrix)
+print(f"Original data shape: {data_matrix.shape}")
+print(f"Total LOG10P values: {len(log10p_values)}")
 
+# Choose a threshold to get around 800 genes
+# Total genes = 1000. Top 800 genes -> Top 80% -> 20th percentile
+threshold = np.percentile(log10p_values, 20)
+print(f"Choosing LOG10P threshold: {threshold:.4f} to get top 80% genes")
 
-def mock_eval_latents(pt_path, num_train=1000, latent_dim=128):
-    print(f"[1] Mocking face latent vectors to '{pt_path}'...")
-    train_latents = torch.randn(num_train, latent_dim)
+valid_gene_indices = np.where(log10p_values > threshold)[0]
+print(f"Number of genes selected: {len(valid_gene_indices)}")
 
-    out_dict = {"train": train_latents}
-    torch.save(out_dict, pt_path)
-    print(f"    Saved {num_train} train latents (dim={latent_dim}).\n")
+# Filter the columns
+filtered_data = data_matrix[:, valid_gene_indices]
 
+# 2. Sort the first col IDs (rows) in ascending order
+print("2. Sorting rows by first col IDs in ascending order...")
 
-def mock_snps(pt_path, num_train=256, num_snps=7842):
-    print(f"[1] Mocking SNP data to '{pt_path}'...")
-    train_snps = torch.randint(0, 3, (num_train, num_snps)).float()
+def get_sort_key(k):
+    val = row_ids[k][1]
+    try:
+        return (0, int(val))
+    except ValueError:
+        return (1, val)
 
-    out_dict = {"train": train_snps}
-    torch.save(out_dict, pt_path)
-    print(f"    Saved {num_train} train SNPs (num_snps={num_snps}).\n")
+sorted_indices = sorted(range(len(row_ids)), key=get_sort_key, reverse=False)
 
+filtered_data = filtered_data[sorted_indices]
+sorted_row_ids = [row_ids[i][1] for i in sorted_indices]
 
-def load_data(pt_path):
-    print(f"[2] Loading data from '{pt_path}'...")
-    if not os.path.exists(pt_path):
-        raise FileNotFoundError(f"File {pt_path} not found.")
+# Convert data to tensor
+gene_tensor = torch.tensor(filtered_data, dtype=torch.long)
+n_ids, n_genes = gene_tensor.shape
+print(f"Filtered and sorted tensor shape: {gene_tensor.shape} (N_ids: {n_ids}, N_genes: {n_genes})")
 
-    data = torch.load(pt_path)
-    train_data = data["train"]
+# 3. Transformer model to get N_ids * 128 dimension
+print("3. Building Transformer model...")
 
-    print(f"    Successfully loaded train data: {train_data.shape}\n")
-    return train_data
+vocab_size = int(gene_tensor.max().item()) + 1
+print(f"Max category ID (vocab size): {vocab_size}")
 
+text_encoder = Transformer(num_snps=n_genes)
+text_encoder.embedding_layer = nn.Embedding(vocab_size, 64)
 
-class ProjectionHead(nn.Module):
-    def __init__(self, in_dim, out_dim=8):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, in_dim), nn.ReLU(), nn.Linear(in_dim, out_dim)
-        )
+image_encoder = nn.Identity()
 
-    def forward(self, x):
-        return self.net(x)
+model = CLIP(
+    image_encoder=image_encoder,
+    text_encoder=text_encoder,
+    dim_text=128,
+    dim_image=16,
+    dim_latent=128
+)
 
+# 4. Mock a latent vector in pt format (N_ids * 16)
+print("4. Mocking latent vectors...")
+mock_latents = torch.randn(n_ids, 16)
+torch.save(mock_latents, 'mock_latents.pt')
+print(f"Saved mock_latents.pt with shape {mock_latents.shape}")
 
-def nt_xent_loss(z1, z2, temperature=0.5):
-    batch_size = z1.size(0)
-    z = torch.cat([z1, z2], dim=0)
+# 5. Train the contrastive learning
+print("5. Training contrastive learning...")
+optimizer = optim.Adam(model.parameters(), lr=1e-3)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
 
-    z = F.normalize(z, dim=-1)
-    sim_matrix = torch.matmul(z, z.T) / temperature
+dataset = TensorDataset(gene_tensor, mock_latents)
+loader = DataLoader(dataset, batch_size=64, shuffle=True)
 
-    sim_ij = torch.diag(sim_matrix, batch_size)
-    sim_ji = torch.diag(sim_matrix, -batch_size)
+cross = nn.CrossEntropyLoss()
+epochs = 50
+model.train()
+for epoch in range(epochs):
+    total_loss = 0.0
 
-    positives = torch.cat([sim_ij, sim_ji], dim=0)
-    nominator = torch.exp(positives)
+    for batch_snps, batch_faces in loader:
+        batch_snps = batch_snps.to(device)
+        batch_faces = batch_faces.to(device)
 
-    mask = (
-        (~torch.eye(2 * batch_size, 2 * batch_size, dtype=torch.bool))
-        .float()
-        .to(z.device)
-    )
-    denominator = mask * torch.exp(sim_matrix)
+        optimizer.zero_grad()
 
-    loss = -torch.log(nominator / denominator.sum(dim=1))
-    return loss.mean()
+        text_features, image_features = model(batch_faces, batch_snps)
 
+        logit_scale = model.logit_scale.exp()
+        logits1 = logit_scale * image_features @ text_features.t()
+        logits2 = logit_scale * text_features @ image_features.t()
 
-def main():
-    csv_path = "Difface/faceclip/dataset/mock_snp_1000_category_ids_mapped.csv"
-    print(f"[1] Loading SNPs from '{csv_path}'...")
-    ids, snp_matrix, id2row, snp_cols, log10p = load_category_csv_to_ram(csv_path)
+        labels = torch.arange(logits1.size(0), device=device)
+        loss_i = cross(logits1, labels)
+        loss_t = cross(logits2, labels)
+        loss = (loss_i + loss_t) / 2
 
-    # Sort subjects by ascending ID
-    ids_sorted = sorted(ids)
-    row_order = [id2row[i] for i in ids_sorted]
-    snp_matrix = snp_matrix[row_order]
-    ids = ids_sorted
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
 
-    # Filter SNPs by LOG10P threshold (~800/1000 kept)
-    log10p_threshold = 1.49
-    snp_keep_mask = log10p > log10p_threshold
-    snp_matrix = snp_matrix[:, snp_keep_mask]
+    avg_loss = total_loss / len(loader)
+    if (epoch + 1) % 10 == 0:
+        print(f"Epoch [{epoch+1}/{epochs}], Contrastive Loss: {avg_loss:.4f}")
 
-    num_train, num_snps = snp_matrix.shape
-    train_snps = torch.tensor(snp_matrix).float()
-    print(f"    Loaded {num_train} subjects, {num_snps} SNPs kept (LOG10P > {log10p_threshold}).\n")
-
-    face_latents_path = "mock_face_latents.pt"
-    latent_dim = 16
-    mock_eval_latents(face_latents_path, num_train=num_train, latent_dim=latent_dim)
-    train_face_latents = load_data(face_latents_path)
-
-    print("[3] Setting up Contrastive Learning with Real Transformer...")
-
-    encoder = Transformer(num_snps=num_snps)
-
-    model_snps = ProjectionHead(in_dim=128, out_dim=8)
-    model_faces = ProjectionHead(in_dim=latent_dim, out_dim=8)
-
-    optimizer = torch.optim.Adam(
-        list(encoder.parameters()) + list(model_snps.parameters()) + list(model_faces.parameters()), lr=1e-3
-    )
-
-    dataset = TensorDataset(train_snps, train_face_latents)
-    loader = DataLoader(dataset, batch_size=64, shuffle=True)
-
-    epochs = 5
-    print(f"    Starting training for {epochs} epochs...\n")
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    encoder = encoder.to(device)
-    model_snps = model_snps.to(device)
-    model_faces = model_faces.to(device)
-
-    for epoch in range(epochs):
-        total_loss = 0.0
-
-        for batch_snps, batch_faces in loader:
-            batch_snps = batch_snps.to(device)
-            batch_faces = batch_faces.to(device)
-
-            optimizer.zero_grad()
-
-            # Encode SNPs (using the real Transformer)
-            z_snps = encoder(batch_snps)
-
-            # Project both modalities to the same shared space (dim=8 here)
-            proj_snps = model_snps(z_snps)
-            proj_faces = model_faces(batch_faces)
-
-            # Contrastive loss between SNPs and Face Latents
-            loss = nt_xent_loss(proj_snps, proj_faces, temperature=0.5)
-            loss.backward()
-            optimizer.step()
-
-            total_loss += loss.item()
-
-        avg_loss = total_loss / len(loader)
-        print(f"    Epoch [{epoch + 1}/{epochs}] - Contrastive Loss: {avg_loss:.4f}")
-
-    print("\n[4] Training complete!")
-
-
-if __name__ == "__main__":
-    main()
+print("Training completed successfully!")

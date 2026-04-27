@@ -94,9 +94,9 @@ class FACE_encoder(nn.Module):
         return z
 
 class Transformer(nn.Module):
-    def __init__(self, num_snps):
+    def __init__(self, num_snps, vocab_size=48):
         super(Transformer, self).__init__()
-        self.embedding_layer = nn.Embedding(3, 64) # Embeds 0, 1, 2 into 64-dimensional vectors
+        self.embedding_layer = nn.Embedding(vocab_size, 64)  # Embeds 0 to vocab_size-1
         self.pos_encoder = nn.Parameter(torch.randn(1, num_snps, 64))
         self.relu1 = nn.ReLU()
         self.relu2 = nn.ReLU()

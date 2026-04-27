@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.utils.data import TensorDataset, DataLoader
 import sys
 import os
 
@@ -74,22 +75,21 @@ print("3. Building Transformer model...")
 vocab_size = int(gene_tensor.max().item()) + 1
 print(f"Max category ID (vocab size): {vocab_size}")
 
-text_encoder = Transformer(num_snps=n_genes)
-text_encoder.embedding_layer = nn.Embedding(vocab_size, 64)
+text_encoder = Transformer(num_snps=n_genes, vocab_size=vocab_size)
 
 image_encoder = nn.Identity()
 
 model = CLIP(
-    image_encoder=image_encoder, 
+    image_encoder=image_encoder,
     text_encoder=text_encoder,
     dim_text=128,
-    dim_image=128,
+    dim_image=16,
     dim_latent=128
 )
 
-# 4. Mock a latent vector in pt format (N_ids * 128)
+# 4. Mock a latent vector in pt format (N_ids * 16)
 print("4. Mocking latent vectors...")
-mock_latents = torch.randn(n_ids, 128)
+mock_latents = torch.randn(n_ids, 16)
 torch.save(mock_latents, 'mock_latents.pt')
 print(f"Saved mock_latents.pt with shape {mock_latents.shape}")
 
@@ -99,32 +99,38 @@ optimizer = optim.Adam(model.parameters(), lr=1e-3)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 
-gene_tensor = gene_tensor.to(device)
-mock_latents = mock_latents.to(device)
+dataset = TensorDataset(gene_tensor, mock_latents)
+loader = DataLoader(dataset, batch_size=64, shuffle=True)
 
+cross = nn.CrossEntropyLoss()
 epochs = 50
 model.train()
 for epoch in range(epochs):
-    optimizer.zero_grad()
-    
-    text_features, image_features = model(mock_latents, gene_tensor)
-    
-    logit_scale = model.logit_scale.exp()
-    logits1 = logit_scale * image_features @ text_features.t()
-    logits2 = logit_scale * text_features @ image_features.t()
+    total_loss = 0.0
 
-    labels = torch.arange(logits1.size(0)).to(device)
+    for batch_snps, batch_faces in loader:
+        batch_snps = batch_snps.to(device)
+        batch_faces = batch_faces.to(device)
 
-    cross = nn.CrossEntropyLoss()
-    loss_i = cross(logits1, labels)
-    loss_t = cross(logits2, labels)
-    
-    loss = (loss_i + loss_t) / 2
-    
-    loss.backward()
-    optimizer.step()
-    
-    if (epoch+1) % 10 == 0:
-        print(f"Epoch [{epoch+1}/{epochs}], Contrastive Loss: {loss.item():.4f}")
+        optimizer.zero_grad()
+
+        text_features, image_features = model(batch_faces, batch_snps)
+
+        logit_scale = model.logit_scale.exp()
+        logits1 = logit_scale * image_features @ text_features.t()
+        logits2 = logit_scale * text_features @ image_features.t()
+
+        labels = torch.arange(logits1.size(0), device=device)
+        loss_i = cross(logits1, labels)
+        loss_t = cross(logits2, labels)
+        loss = (loss_i + loss_t) / 2
+
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+
+    avg_loss = total_loss / len(loader)
+    if (epoch + 1) % 10 == 0:
+        print(f"Epoch [{epoch+1}/{epochs}], Contrastive Loss: {avg_loss:.4f}")
 
 print("Training completed successfully!")
