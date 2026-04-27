@@ -37,7 +37,7 @@ def load_category_csv_to_ram(csv_path: str, dtype=np.int32):
                 log10p = np.asarray(row[1:], dtype=np.float32)
                 continue
             ids.append(row_name)
-            rows.append(np.asarray(row[1:], dtype=dtype))
+            rows.append(np.asarray(row[1:], dtype=np.float32).astype(dtype))
 
     X = np.stack(rows, axis=0)
     X = map_categories_to_012(X)

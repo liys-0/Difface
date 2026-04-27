@@ -1,4 +1,5 @@
 .venv/
 Difface/faceclip/__pycache__/
 __pycache__/
-
+slurm_output/
+venv/
