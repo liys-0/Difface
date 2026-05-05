@@ -4,3 +4,5 @@ __pycache__/
 slurm_output/
 venv/
 faceclip/dataset/
+Difface/faceclip/dataset/
+
