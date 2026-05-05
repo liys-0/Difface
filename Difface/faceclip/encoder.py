@@ -2,8 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.functional import normalize as norm
-from torch_scatter import scatter_add
-from spiralconv import SpiralConv
+try:
+    from torch_scatter import scatter_add
+    from spiralconv import SpiralConv
+    _MESH_DEPS = True
+except ImportError:
+    _MESH_DEPS = False
 
 def l2norm(t):
     return F.normalize(t, dim = -1, p = 2)
@@ -94,9 +98,9 @@ class FACE_encoder(nn.Module):
         return z
 
 class Transformer(nn.Module):
-    def __init__(self):
+    def __init__(self, num_snps=7842):
         super(Transformer, self).__init__()
-        self.fc1 = nn.Linear(7842, 1024)
+        self.fc1 = nn.Linear(num_snps, 1024)
         self.embedding_layer = nn.Embedding(1,4)
         self.relu1 = nn.ReLU()
         self.relu2 = nn.ReLU()

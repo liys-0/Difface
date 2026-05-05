@@ -1,8 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_scatter import scatter_add
-from spiralconv import SpiralConv
+try:
+    from torch_scatter import scatter_add
+    from spiralconv import SpiralConv
+    _MESH_DEPS = True
+except ImportError:
+    _MESH_DEPS = False
 
 
 def Pool(x, trans, dim=1):
