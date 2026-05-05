@@ -1,3 +1,11 @@
 venv/
 slurm_output/
 wheels/
+
+# Virtual environments
+.venv/
+myenv/
+
+# Python cache
+__pycache__/
+Difface/faceclip/__pycache__/
