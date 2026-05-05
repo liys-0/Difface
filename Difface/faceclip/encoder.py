@@ -98,24 +98,20 @@ class FACE_encoder(nn.Module):
         return z
 
 class Transformer(nn.Module):
-    def __init__(self, num_snps=7842):
+    def __init__(self, num_snps=7842, vocab_size=48):
         super(Transformer, self).__init__()
-        self.fc1 = nn.Linear(num_snps, 1024)
-        self.relu1 = nn.ReLU()
+        self.embedding_layer = nn.Embedding(vocab_size, 64)
+        self.pos_enc = nn.Parameter(torch.randn(1, num_snps, 64))
         self.relu2 = nn.ReLU()
-        self.pos_enc = nn.Parameter(torch.randn(1, 1024, 64))
         self.layer1 = nn.TransformerEncoderLayer(d_model=64, nhead=8, dim_feedforward=512, dropout=0.1, layer_norm_eps=1e-05)
         self.layer2 = nn.TransformerEncoderLayer(d_model=64, nhead=8, dim_feedforward=512, dropout=0.1, layer_norm_eps=1e-05)
 
-        self.fc2 = nn.Linear(64*1024, 128)
+        self.fc2 = nn.Linear(64*num_snps, 128)
 
     def forward(self, x):
-        x = x.float()
-        x = self.relu1(self.fc1(x))
-        x = x.unsqueeze(2)
-        x = x.expand(-1, -1, 64)
+        x = self.embedding_layer(x.long())   # (B, num_snps, 64)
         x = x + self.pos_enc
-        x = x.permute(1, 0, 2)
+        x = x.permute(1, 0, 2)              # (num_snps, B, 64)
         x1 = self.layer1(x) 
         x1 = x1 + x
         x2 = self.layer2(x1)

@@ -58,9 +58,9 @@ with open(SNP_CSV, 'r', newline='') as f:
         if not row:
             continue
         image_ids.append(row[0].strip())
-        snp_rows.append([float(v) for v in row[2:]])      # skip image_id & geno_id
+        snp_rows.append([int(float(v)) for v in row[2:]])   # skip image_id & geno_id
 
-snp_matrix = np.array(snp_rows, dtype=np.float32)        # (N, n_snps)
+snp_matrix = np.array(snp_rows, dtype=np.int64)          # (N, n_snps)
 print(f"   Loaded: {snp_matrix.shape[0]} subjects × {snp_matrix.shape[1]} SNPs")
 
 
@@ -114,7 +114,7 @@ else:
     decoder       = None
     print(f"   Using nn.Identity() for face (latents mode, no decoder)")
 
-snp_encoder = Transformer(num_snps=n_snps).to(device)
+snp_encoder = Transformer(num_snps=n_snps, vocab_size=48).to(device)
 print(f"   Transformer built (num_snps={n_snps})")
 
 model = CLIP(
@@ -129,7 +129,7 @@ print(f"   CLIP built")
 
 # ── 4. Dataset and loaders ────────────────────────────────────────────────────
 print("\n4. Setting up data loaders...")
-gene_tensor = torch.tensor(snp_matrix, dtype=torch.float32)
+gene_tensor = torch.tensor(snp_matrix, dtype=torch.long)
 dataset     = TensorDataset(gene_tensor, face_data)
 n_test      = int(n_subjects * TEST_RATIO)
 n_train     = n_subjects - n_test
