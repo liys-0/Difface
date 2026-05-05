@@ -14,4 +14,6 @@ Difface/faceclip/__pycache__/
 # Slurm script (if local only)
 slurm_contrastive.sh
 
-
+out/
+../../toServer/
+toServer/
