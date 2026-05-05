@@ -2,6 +2,7 @@ venv/
 slurm_output/
 wheels/
 
+
 # Virtual environments
 .venv/
 myenv/
@@ -9,3 +10,8 @@ myenv/
 # Python cache
 __pycache__/
 Difface/faceclip/__pycache__/
+
+# Slurm script (if local only)
+slurm_contrastive.sh
+
+
