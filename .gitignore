@@ -17,3 +17,6 @@ slurm_contrastive.sh
 out/
 ../../toServer/
 toServer/
+
+# Dataset files
+Difface/faceclip/dataset/
